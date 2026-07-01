@@ -194,6 +194,7 @@ class SttCore:
         self.recording = False
         self._busy = False
         self.model = None
+        self._target_app = None   # the app/field to type back into
 
     def load_model(self):
         from faster_whisper import WhisperModel
@@ -209,9 +210,31 @@ class SttCore:
         print(f"[model] Ready in {time.time() - t0:.1f}s.")
         self.on_status("idle")
 
+    def _capture_target_app(self):
+        """Remember which app is frontmost right now — that's the text field the
+        user is 'latched' onto. We restore focus to it before typing."""
+        try:
+            from AppKit import NSWorkspace
+            self._target_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        except Exception:
+            self._target_app = None
+
+    def _refocus_target_app(self):
+        """Re-latch onto the remembered app so the caret is back in the user's
+        field, then keystrokes land there instead of in our own window."""
+        try:
+            if self._target_app is not None:
+                # NSApplicationActivateIgnoringOtherApps = 1 << 1
+                self._target_app.activateWithOptions_(1 << 1)
+                time.sleep(0.12)   # give macOS a moment to restore field focus
+        except Exception:
+            pass
+
     def start_recording(self):
         if self.recording or self._busy or self.model is None:
             return
+        # capture the target BEFORE our pill/window can steal focus
+        self._capture_target_app()
         self.recording = True
         self.on_status("recording")
         self.beeper.start()
@@ -251,6 +274,8 @@ class SttCore:
             )
             text = " ".join(seg.text.strip() for seg in segments).strip()
             self.on_transcript(text)
+            if text:
+                self._refocus_target_app()   # re-latch onto the user's field
             self.typist.deliver(text)
             self.beeper.done()
         except Exception as e:
@@ -258,6 +283,38 @@ class SttCore:
         finally:
             self._busy = False
             self.on_status("idle")
+
+
+# ── macOS raw-keycode hotkey support ─────────────────────────────────────────
+# hotkey modifier names -> canonical category
+_MODNAMES = {
+    "shift": "shift",
+    "ctrl": "ctrl", "control": "ctrl",
+    "alt": "alt", "option": "alt", "opt": "alt",
+    "cmd": "cmd", "command": "cmd", "super": "cmd", "win": "cmd",
+}
+# US-layout virtual key codes for non-modifier keys
+_KEYCODES = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
+    "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+    "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45,
+    "m": 46,
+    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28,
+    "9": 25, "0": 29,
+    "space": 49, "return": 36, "enter": 36, "tab": 48, "escape": 53, "esc": 53,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98,
+    "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+}
+def _parse_hotkey(spec):
+    """'<ctrl>+<shift>+d' -> (main_vk or None, {'ctrl', 'shift'})."""
+    mods, main_vk = set(), None
+    for tok in spec.split("+"):
+        t = tok.strip().strip("<>").lower()
+        if t in _MODNAMES:
+            mods.add(_MODNAMES[t])
+        elif t in _KEYCODES:
+            main_vk = _KEYCODES[t]
+    return main_vk, mods
 
 
 class HotkeyManager:
@@ -271,45 +328,76 @@ class HotkeyManager:
         self._held = False
 
     def start(self):
+        """Listen for the hotkey with a plain global key listener.
+
+        This is the approach proven to work reliably on macOS (see the staged
+        hotkey tests): track modifier keys by press/release, and match the main
+        key by its hardware code (vk) so Shift changing 'd'->'D', or Option
+        remapping characters, never breaks detection. We deliberately avoid
+        pynput.GlobalHotKeys / HotKey.parse and event-tap suppression, both of
+        which failed in practice here."""
         from pynput import keyboard
+        K = keyboard.Key
+
+        modsets = {
+            "ctrl": {K.ctrl, K.ctrl_l, K.ctrl_r},
+            "shift": {K.shift, K.shift_l, K.shift_r},
+            "alt": {K.alt, K.alt_l, K.alt_r, getattr(K, "alt_gr", K.alt)},
+            "cmd": {K.cmd, K.cmd_l, K.cmd_r},
+        }
+        key_to_cat = {kk: cat for cat, keys in modsets.items() for kk in keys}
+
         mode = self.cfg["mode"]
-        hotkey = self.cfg["hotkey"]
-        quit_hotkey = self.cfg["quit_hotkey"]
+        main_vk, main_mods = _parse_hotkey(self.cfg["hotkey"])
+        quit_vk, quit_mods = _parse_hotkey(self.cfg["quit_hotkey"])
 
-        if mode == "hold":
-            self._start_hold(keyboard, hotkey, quit_hotkey)
-        else:
-            self._listener = keyboard.GlobalHotKeys({
-                hotkey: self.core.toggle,
-                quit_hotkey: self.on_quit,
-            })
-            self._listener.start()
+        held = set()                      # modifier categories currently down
+        st = {"main_down": False, "hold_rec": False, "quit_down": False}
 
-    def _start_hold(self, keyboard, hotkey, quit_hotkey):
-        hk = keyboard.HotKey(keyboard.HotKey.parse(hotkey), lambda: None)
-        qk = keyboard.HotKey(keyboard.HotKey.parse(quit_hotkey), self.on_quit)
+        def fire(target):
+            # run off the listener thread so recording/model work never stalls input
+            threading.Thread(target=target, daemon=True).start()
 
-        def active(h):
-            return len(h._state) == len(h._keys)
+        def on_press(k):
+            cat = key_to_cat.get(k)
+            if cat:
+                held.add(cat)
+                return
+            vk = getattr(k, "vk", None)
+            if (vk == main_vk and main_mods <= held and not st["main_down"]):
+                st["main_down"] = True
+                if mode == "hold":
+                    st["hold_rec"] = True
+                    fire(self.core.start_recording)
+                else:
+                    fire(self.core.toggle)
+            if (quit_vk is not None and vk == quit_vk and quit_mods <= held
+                    and not st["quit_down"]):
+                st["quit_down"] = True
+                fire(self.on_quit)
 
-        def on_press(key):
-            c = self._listener.canonical(key)
-            hk.press(c)
-            qk.press(c)
-            if active(hk) and not self._held:
-                self._held = True
-                self.core.start_recording()
-
-        def on_release(key):
-            c = self._listener.canonical(key)
-            hk.release(c)
-            qk.release(c)
-            if self._held and not active(hk):
-                self._held = False
-                self.core.stop_recording()
+        def on_release(k):
+            cat = key_to_cat.get(k)
+            if cat:
+                held.discard(cat)
+                if mode == "hold" and st["hold_rec"] and cat in main_mods:
+                    st["hold_rec"] = False
+                    st["main_down"] = False
+                    fire(self.core.stop_recording)
+                return
+            vk = getattr(k, "vk", None)
+            if vk == main_vk:
+                st["main_down"] = False
+                if mode == "hold" and st["hold_rec"]:
+                    st["hold_rec"] = False
+                    fire(self.core.stop_recording)
+            if quit_vk is not None and vk == quit_vk:
+                st["quit_down"] = False
 
         self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._listener.start()
+        print(f"[hotkey] listening: {self.cfg['hotkey']} ({mode} mode), "
+              f"quit {self.cfg['quit_hotkey']}")
 
     def stop(self):
         if self._listener is not None:

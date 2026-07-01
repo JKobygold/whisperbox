@@ -1,5 +1,5 @@
 {
-  "hotkey": "<ctrl>+<alt>+<space>",
+  "hotkey": "<ctrl>+<shift>+d",
   "mode": "toggle",
   "output": "both",
   "auto_paste": false,
@@ -10,7 +10,7 @@
   "beam_size": 5,
   "sample_rate": 16000,
   "sound_feedback": true,
-  "quit_hotkey": "<ctrl>+<alt>+q",
+  "quit_hotkey": "<ctrl>+<shift>+q",
   "overlay": true,
   "insert_space": true
 }

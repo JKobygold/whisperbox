@@ -66,7 +66,7 @@ class Overlay:
 
         self.win = tk.Toplevel(root)
         self.win.withdraw()
-        self.win.overrideredirect(True)           # borderless, no title bar
+        self._make_nonactivating()
         try:
             self.win.attributes("-topmost", True)
         except tk.TclError:
@@ -75,6 +75,16 @@ class Overlay:
                                 bg=PILL, highlightthickness=0)
         self.canvas.pack()
         self._animate()
+
+    def _make_nonactivating(self):
+        """macOS: a borderless HUD window that NEVER takes keyboard focus, so
+        dictated text goes to the app you're actually in — not this pill. Falls
+        back to a plain borderless window elsewhere."""
+        try:
+            self.win.tk.call("::tk::unsupported::MacWindowStyle", "style",
+                             self.win._w, "help", "noActivates")
+        except tk.TclError:
+            self.win.overrideredirect(True)
 
     def _round_rect(self, x1, y1, x2, y2, r, **kw):
         pts = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
