@@ -1,16 +1,26 @@
 # 🎙️ Whisperbox — Local Speech-to-Text
 
-**Speak instead of type. Anywhere on your Mac. Nothing ever leaves your machine.**
+**A free, private, on-device alternative to the $10–15/month dictation apps.**
 
-Whisperbox is a tiny, private **speech-to-text** engine that turns your voice
-into text in *any* app. Press a hotkey, talk, and your words appear right where
-your cursor is. It runs [OpenAI's Whisper](https://github.com/openai/whisper)
-locally via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), so
-your voice is transcribed **entirely on-device** — no cloud, no account, no
-subscription, no network calls after the one-time model download.
+Whisperbox does what **Wispr Flow, Superwhisper, and MacWhisper** charge a
+monthly subscription for — press a hotkey, talk, and your words are typed into
+*any* app — except it's **free, open-source, and 100% local.** Your voice is
+transcribed on your own Mac with [OpenAI's Whisper](https://github.com/openai/whisper)
+(via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) and never
+touches the cloud. No account, no subscription, no data leaving your machine.
 
-It runs as a **background app**: no window, no Dock icon, no Terminal. Just you,
-your keyboard-free voice, and text that lands wherever you're already working.
+It runs quietly in the background — press a key, speak, and the text appears
+wherever your cursor is.
+
+### Whisperbox vs. the paid apps
+
+| | Whisperbox | Wispr Flow / Superwhisper |
+| --- | --- | --- |
+| **Price** | Free, forever | ~$10–15 / month |
+| **Where your audio goes** | Stays on your Mac | Often uploaded to the cloud |
+| **Works offline** | ✅ Yes | ⚠️ Usually needs internet |
+| **Account required** | ❌ None | ✅ Sign-up |
+| **Hackable / open-source** | ✅ ~300 lines of Python | ❌ Closed |
 
 ## What it's great for
 
@@ -60,20 +70,14 @@ Prefer the terminal? There's a headless CLI mode too.
 ### ✨ Dictate straight into any text field
 
 The whole point: put your cursor in *any* text field — an email, a code
-comment, a chat box — hit your hotkey, and speak. A slim **floating pill**
-slides up from the bottom of the screen with a **live waveform** so you know
-it's listening, then shows a shimmer while it transcribes. Your words are
-inserted **right at the caret**, appended cleanly to whatever you'd already
-typed. The pill never steals focus, so your text field stays active the whole
-time — then it quietly disappears.
+comment, a chat box — hit your hotkey, and speak. Your words are inserted
+**right at the caret**, appended cleanly to whatever you'd already typed. A soft
+sound marks the start and end of recording (fully configurable), and it never
+steals focus, so your text field stays active the whole time.
 
-```text
-        ┌─────────────────────────────────────┐
-        │  ●   ▁▃▅▇▆▄▂▁▂▄▆▇▅▃▁▂▄▅▃▂            │   ← floating pill: live waveform
-        └─────────────────────────────────────┘
-```
-
-Toggle the pill and the smart leading-space behavior in **⚙ Settings**.
+> There's also an experimental animated **waveform pill** (`"overlay": true` in
+> `config.json`) — a live audio visualizer. It's off by default because a GUI
+> window can steal keyboard focus; the windowless engine is the reliable default.
 
 ---
 
@@ -82,34 +86,47 @@ Toggle the pill and the smart leading-space behavior in **⚙ Settings**.
 ```bash
 git clone https://github.com/JKobygold/whisperbox.git
 cd whisperbox
-./setup.sh              # one-time: creates a venv, installs deps
-./build-app.sh          # one-time: builds Whisperbox.app
-open Whisperbox.app     # runs silently in the background
+./setup.sh              # one-time: create a venv, install dependencies
+./whisperbox-start.sh   # start it — runs in the background
 ```
 
 The first launch downloads the Whisper model once (~500 MB for `small.en`);
-after that it's fully offline. Then just:
+after that it's fully offline. Then:
 
-1. Click into any text field
+1. Click into any text field (editor, browser, chat box…)
 2. Press **Ctrl + Shift + D**, talk, press **Ctrl + Shift + D** again
 3. Your words type themselves in, right at the cursor
 
-It runs as a **background app** — no window, no Dock icon, and it never steals
-focus. Press **Ctrl+Shift+W** for Settings, **Ctrl+Shift+Q** to quit.
+`whisperbox-start.sh` launches Whisperbox **detached**, so it keeps running even
+after you close the terminal. Quit it with **Ctrl + Shift + Q** (or
+`pkill -f whisperbox_native.py`).
 
-> Prefer a visible window? Set `"show_window": true` in `config.json`, or run
-> `./run.sh` (window) / `./run-cli.sh` (terminal only).
+### Make it a `whisperbox` command
+
+So you can start it from anywhere, add an alias:
+
+```bash
+echo "alias whisperbox='$PWD/whisperbox-start.sh'" >> ~/.zshrc      # zsh
+echo "alias whisperbox='$PWD/whisperbox-start.sh'" >> ~/.bash_profile   # bash
+```
+
+Now just type `whisperbox` in any terminal — or double-click `Whisperbox.command`
+in Finder.
 
 ### macOS permissions (one time)
 
 The mic, typing, and the global hotkey each need permission under
-**System Settings → Privacy & Security**. Grant these to **Whisperbox** (it may
-appear as "Python") — or to **Terminal** if you launch via `./run.sh` — then
-relaunch:
+**System Settings → Privacy & Security**. Grant these to the **Terminal** app you
+launch it from, then relaunch:
 
 - **Microphone** — to hear you
-- **Accessibility** — to type text and register the hotkey
-- **Input Monitoring** — for the global hotkey listener
+- **Accessibility** — to type text into other apps
+- **Input Monitoring** — for the global hotkey
+
+> **macOS 26 note:** Whisperbox runs a native, dependency-light engine
+> (`whisperbox_native.py`) that talks to macOS's own key/text APIs directly — no
+> `pynput`, no GUI toolkit — which keeps it fast and crash-free on the latest
+> macOS.
 
 ---
 
