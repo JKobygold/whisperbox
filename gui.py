@@ -77,14 +77,10 @@ class Overlay:
         self._animate()
 
     def _make_nonactivating(self):
-        """macOS: a borderless HUD window that NEVER takes keyboard focus, so
-        dictated text goes to the app you're actually in — not this pill. Falls
-        back to a plain borderless window elsewhere."""
-        try:
-            self.win.tk.call("::tk::unsupported::MacWindowStyle", "style",
-                             self.win._w, "help", "noActivates")
-        except tk.TclError:
-            self.win.overrideredirect(True)
+        """Borderless floating pill. (Focus is handled by the core's re-latch,
+        which restores your text field before typing — so we avoid the fragile
+        native window-style calls that were crashing Python at launch.)"""
+        self.win.overrideredirect(True)
 
     def _round_rect(self, x1, y1, x2, y2, r, **kw):
         pts = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
@@ -166,32 +162,25 @@ class App:
             on_status=lambda s: self.events.put(("status", s)),
             on_transcript=lambda t: self.events.put(("transcript", t)),
             on_error=lambda e: self.events.put(("error", e)),
+            # deliver (type into the field) MUST happen on the main thread on
+            # macOS, or the input-source APIs crash. Route it through the pump.
+            on_deliver=lambda t: self.events.put(("deliver", t)),
         )
 
-        self._make_background_app()
         self._build_ui()
         self.overlay = Overlay(self.root, self.core)
         self.root.after(60, self._pump)
         self._pulse_phase = 0.0
         self._animate()
 
-        # Run hidden in the background by default — only the pill shows while
-        # dictating, so we never steal focus from your text field.
-        if not self.cfg.get("show_window", False):
+        # Optionally start hidden. Focus is handled by the re-latch logic in the
+        # core (it restores your field before typing), so a visible window is
+        # fine and stable.
+        if not self.cfg.get("show_window", True):
             self.root.withdraw()
 
         # Load the model in the background so the window appears instantly.
         threading.Thread(target=self._boot, daemon=True).start()
-
-    def _make_background_app(self):
-        """Become a macOS 'accessory' process: no Dock icon, and — crucially —
-        never becomes the active app, so the field you're typing in keeps focus
-        and dictation flows straight into it."""
-        try:
-            from AppKit import NSApplication
-            NSApplication.sharedApplication().setActivationPolicy_(1)  # Accessory
-        except Exception:
-            pass
 
     # ── setup ───────────────────────────────────────────────────────────────
     def _model_sig(self):
@@ -469,6 +458,8 @@ class App:
                     self._set_state(payload)
                 elif kind == "transcript":
                     self._show_transcript(payload)
+                elif kind == "deliver":
+                    self.core.deliver(payload)   # on the main thread — safe
                 elif kind == "error":
                     self.status_lbl.config(text=payload, fg=REC)
                 elif kind == "saved_model":

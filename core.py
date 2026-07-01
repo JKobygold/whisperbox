@@ -185,11 +185,16 @@ class Typist:
 class SttCore:
     """Microphone + Whisper + output, wired to status/transcript callbacks."""
 
-    def __init__(self, cfg, on_status=None, on_transcript=None, on_error=None):
+    def __init__(self, cfg, on_status=None, on_transcript=None, on_error=None,
+                 on_deliver=None):
         self.cfg = cfg
         self.on_status = on_status or (lambda s: None)
         self.on_transcript = on_transcript or (lambda t: None)
         self.on_error = on_error or (lambda e: None)
+        # If set, the front-end is responsible for calling deliver() on the MAIN
+        # thread (required on macOS: typing/app-activation use input-source APIs
+        # that crash if called off the main thread while an app loop is running).
+        self.on_deliver = on_deliver
         self.beeper = Beeper(cfg["sound_feedback"])
         self.recorder = Recorder(cfg["sample_rate"])
         self.typist = Typist(cfg)
@@ -232,13 +237,28 @@ class SttCore:
         except Exception:
             pass
 
+    def deliver(self, text):
+        """Re-latch onto the user's field and type the text. MUST run on the main
+        thread on macOS (input-source APIs assert main-thread when an app loop is
+        active) — the GUI routes here via its main-thread event pump."""
+        if not text:
+            return
+        self._refocus_target_app()
+        self.typist.deliver(text)
+        print("[stt]  -> delivered", flush=True)
+        self.beeper.done()
+
     def start_recording(self):
+        print(f"[stt] start_recording called (recording={self.recording} "
+              f"busy={self._busy} model={'ok' if self.model else 'None'})", flush=True)
         if self.recording or self._busy or self.model is None:
+            print("[stt]  -> ignored by guard", flush=True)
             return
         # capture the target BEFORE our pill/window can steal focus
         self._capture_target_app()
         self.recording = True
         self.on_status("recording")
+        print("[stt]  -> RECORDING", flush=True)
         self.beeper.start()
         try:
             self.recorder.start()
@@ -248,6 +268,7 @@ class SttCore:
             self.on_status("idle")
 
     def stop_recording(self):
+        print(f"[stt] stop_recording called (recording={self.recording})", flush=True)
         if not self.recording:
             return
         self.recording = False
@@ -258,6 +279,7 @@ class SttCore:
         threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
 
     def toggle(self):
+        print(f"[stt] toggle called (recording={self.recording})", flush=True)
         if self.recording:
             self.stop_recording()
         else:
@@ -275,11 +297,12 @@ class SttCore:
                 beam_size=self.cfg["beam_size"],
             )
             text = " ".join(seg.text.strip() for seg in segments).strip()
+            print(f"[stt] transcript: {text!r}", flush=True)
             self.on_transcript(text)
-            if text:
-                self._refocus_target_app()   # re-latch onto the user's field
-            self.typist.deliver(text)
-            self.beeper.done()
+            if self.on_deliver is not None:
+                self.on_deliver(text)     # front-end delivers on the main thread
+            else:
+                self.deliver(text)        # no app loop (CLI): safe to do inline
         except Exception as e:
             self.on_error(f"Transcription error: {e}")
         finally:
