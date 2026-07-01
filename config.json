@@ -11,8 +11,11 @@
   "sample_rate": 16000,
   "sound_feedback": true,
   "quit_hotkey": "<ctrl>+<shift>+q",
-  "overlay": true,
+  "overlay": false,
   "insert_space": true,
+  "start_sound": "Tink",
+  "stop_sound": "Pop",
+  "done_sound": "Glass",
   "show_window": true,
   "window_hotkey": "<ctrl>+<shift>+w"
 }

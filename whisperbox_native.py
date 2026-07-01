@@ -14,10 +14,17 @@ hard crash. This build avoids that entirely:
 Windowless by design, so it never steals focus — text goes straight into the
 field you're in. Ctrl+Shift+D to dictate, Ctrl+Shift+Q to quit (configurable).
 """
+import collections
 import json
 import os
 import threading
 import time
+
+try:
+    import tkinter as tk
+    _HAS_TK = True
+except Exception:
+    _HAS_TK = False
 
 import numpy as np
 import sounddevice as sd
@@ -36,7 +43,12 @@ CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 cfg = {"hotkey": "<ctrl>+<shift>+d", "quit_hotkey": "<ctrl>+<shift>+q",
        "model": "small.en", "language": "en", "compute_type": "int8",
        "sample_rate": 16000, "output": "both", "insert_space": True,
-       "sound_feedback": True}
+       "sound_feedback": True,
+       # System sound names from /System/Library/Sounds (Basso, Blow, Bottle,
+       # Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, Submarine,
+       # Tink). Set to "" to silence that cue.
+       "start_sound": "Tink", "stop_sound": "Pop", "done_sound": "Glass",
+       "overlay": True}          # show the animated waveform pill while dictating
 try:
     with open(CONFIG) as f:
         cfg.update({k: v for k, v in json.load(f).items() if v is not None})
@@ -74,7 +86,7 @@ Q_KC, Q_MODS = parse(cfg["quit_hotkey"])
 
 
 def beep(name):
-    if cfg.get("sound_feedback"):
+    if name and cfg.get("sound_feedback"):
         os.system(f"afplay /System/Library/Sounds/{name}.aiff >/dev/null 2>&1 &")
 
 
@@ -108,12 +120,15 @@ stop_event = threading.Event()
 _lock = threading.Lock()                       # guards start/stop transitions
 _model_lock = threading.Lock()                 # ctranslate2 is NOT concurrency-safe
 rec = {"stream": None, "buf": None, "busy": False}
+ui = {"state": "idle"}                          # idle | recording | transcribing
+levels = collections.deque(maxlen=48)           # recent audio levels for the pill
 
 
 def audio_cb(indata, n, t, status):
     buf = rec["buf"]
     if buf is not None:            # ignore stray callbacks when not recording
         buf.append(indata.copy())
+        levels.append(min(1.0, float(np.sqrt(np.mean(np.square(indata)))) * 12.0))
 
 
 def start_rec():
@@ -124,8 +139,10 @@ def start_rec():
         s = sd.InputStream(samplerate=cfg["sample_rate"], channels=1,
                            dtype="float32", blocksize=1600, callback=audio_cb)
         rec["stream"] = s
+    levels.clear()
+    ui["state"] = "recording"
     s.start()
-    beep("Tink")
+    beep(cfg.get("start_sound", "Tink"))
     print("[native] RECORDING (press hotkey again to stop)", flush=True)
 
 
@@ -142,7 +159,8 @@ def stop_rec():
         s.stop(); s.close()
     except Exception:
         pass
-    beep("Pop")
+    ui["state"] = "transcribing"
+    beep(cfg.get("stop_sound", "Pop"))
     audio = (np.concatenate(buf).flatten() if buf
              else np.zeros(0, dtype="float32"))
     threading.Thread(target=transcribe, args=(audio,), daemon=True).start()
@@ -171,12 +189,13 @@ def transcribe(audio):
                 copy_clip(text)
             if out in ("type", "both"):
                 type_text((" " + text) if cfg.get("insert_space") else text)
-            beep("Glass")
+            beep(cfg.get("done_sound", "Glass"))
     except Exception as e:
         print(f"[native] transcribe error: {e}", flush=True)
     finally:
         with _lock:
             rec["busy"] = False
+        ui["state"] = "idle"
 
 
 def toggle():
@@ -226,11 +245,110 @@ def run_tap():
     CFRunLoopRun()
 
 
-threading.Thread(target=run_tap, daemon=True).start()
-print("[native] ready — click a text field, press your hotkey, talk, press again.",
-      flush=True)
-try:
-    stop_event.wait()
-except KeyboardInterrupt:
-    pass
-print("[native] quitting.", flush=True)
+# ── animated waveform pill (optional, safe: pure Tk, no pynput/AppKit) ────────
+class Pill:
+    W, H = 300, 62
+    PILL, REC, AMBER, BORDER = "#14161c", "#ff4b4b", "#ffb020", "#2a2f3a"
+
+    def __init__(self, root):
+        self.win = tk.Toplevel(root)
+        self.win.withdraw()
+        self.win.overrideredirect(True)         # borderless; doesn't take focus
+        try:
+            self.win.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        self.canvas = tk.Canvas(self.win, width=self.W, height=self.H,
+                                bg=self.PILL, highlightthickness=0)
+        self.canvas.pack()
+        self.visible = False
+        self.phase = 0.0
+
+    def _round(self, x1, y1, x2, y2, r, **kw):
+        p = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
+             x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y1+r, x1, y1]
+        return self.canvas.create_polygon(p, smooth=True, **kw)
+
+    def show(self):
+        if self.visible:
+            return
+        sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        self.win.geometry(f"{self.W}x{self.H}+{(sw-self.W)//2}+{sh-150}")
+        self.win.deiconify()
+        self.win.lift()
+        try:
+            self.win.attributes("-topmost", True, "-alpha", 0.96)
+        except tk.TclError:
+            pass
+        self.visible = True
+
+    def hide(self):
+        if self.visible:
+            self.win.withdraw()
+            self.visible = False
+
+    def draw(self, state, lv):
+        import math
+        c = self.canvas
+        c.delete("all")
+        W, H, cy = self.W, self.H, self.H / 2
+        self._round(1, 1, W-1, H-1, 26, fill=self.PILL, outline=self.BORDER)
+        listening = state == "recording"
+        color = self.REC if listening else self.AMBER
+        c.create_oval(20, cy-5, 30, cy+5, fill=color, outline="")
+        x0, x1, n = 46, W-22, 22
+        gap = (x1 - x0) / n
+        if listening:
+            lv = lv[-n:]
+            lv = [0.0] * (n - len(lv)) + lv
+        else:
+            self.phase += 0.35
+            lv = [(math.sin(self.phase + i*0.5) + 1) / 2 * 0.7 for i in range(n)]
+        for i in range(n):
+            bh = max(3, lv[i] * (H * 0.62))
+            x = x0 + i*gap + gap/2
+            c.create_line(x, cy-bh/2, x, cy+bh/2, fill=color, width=3,
+                          capstyle="round")
+
+
+def main():
+    threading.Thread(target=run_tap, daemon=True).start()
+    print("[native] ready — click a text field, press your hotkey, talk, "
+          "press again.", flush=True)
+
+    # No pill (or Tk unavailable) -> exactly the proven windowless behavior.
+    if not cfg.get("overlay", True) or not _HAS_TK:
+        try:
+            stop_event.wait()
+        except KeyboardInterrupt:
+            pass
+        print("[native] quitting.", flush=True)
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+    pill = Pill(root)
+
+    def poll():
+        if stop_event.is_set():
+            try:
+                root.destroy()
+            finally:
+                return
+        state = ui["state"]
+        if state in ("recording", "transcribing"):
+            pill.show()
+            pill.draw(state, list(levels))
+        else:
+            pill.hide()
+        root.after(45, poll)
+
+    root.after(50, poll)
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    print("[native] quitting.", flush=True)
+
+
+main()
