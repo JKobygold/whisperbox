@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# App / runtime
+*.log
+.DS_Store
+
+# Model cache (downloaded on first run)
+models/

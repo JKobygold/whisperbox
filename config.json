@@ -1,0 +1,14 @@
+{
+  "hotkey": "<ctrl>+<alt>+<space>",
+  "mode": "toggle",
+  "output": "both",
+  "auto_paste": false,
+  "model": "small.en",
+  "language": "en",
+  "compute_type": "int8",
+  "device": "cpu",
+  "beam_size": 5,
+  "sample_rate": 16000,
+  "sound_feedback": true,
+  "quit_hotkey": "<ctrl>+<alt>+q"
+}
