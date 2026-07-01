@@ -43,6 +43,24 @@ A small dark window with everything front-and-center:
 
 Prefer the terminal? There's a headless CLI mode too.
 
+### ✨ Dictate straight into any text field
+
+The whole point: put your cursor in *any* text field — an email, a code
+comment, a chat box — hit your hotkey, and speak. A slim **floating pill**
+slides up from the bottom of the screen with a **live waveform** so you know
+it's listening, then shows a shimmer while it transcribes. Your words are
+inserted **right at the caret**, appended cleanly to whatever you'd already
+typed. The pill never steals focus, so your text field stays active the whole
+time — then it quietly disappears.
+
+```text
+        ┌─────────────────────────────────────┐
+        │  ●   ▁▃▅▇▆▄▂▁▂▄▆▇▅▃▁▂▄▅▃▂            │   ← floating pill: live waveform
+        └─────────────────────────────────────┘
+```
+
+Toggle the pill and the smart leading-space behavior in **⚙ Settings**.
+
 ---
 
 ## Quickstart (macOS)
@@ -84,6 +102,8 @@ Everything is driven by [`config.json`](config.json) (or the ⚙️ Settings pan
   "hotkey": "<ctrl>+<alt>+<space>",
   "mode": "toggle",
   "output": "both",
+  "overlay": true,
+  "insert_space": true,
   "auto_paste": false,
   "model": "small.en",
   "language": "en",
@@ -109,7 +129,15 @@ as space/tab/enter must be wrapped: `<space>`, `<tab>`, `<enter>`.
 ### `output`
 
 - `"clipboard"` · `"type"` · `"both"` *(default)*
+- `"type"`/`"both"` insert at the cursor in the focused field — this is what
+  lets you dictate straight into any app.
 - Set `"auto_paste": true` to auto-press ⌘V after copying.
+
+### `overlay` & `insert_space`
+
+- `overlay` *(default `true`)* — show the floating waveform pill while dictating.
+- `insert_space` *(default `true`)* — prepend a space so dictated text appends
+  cleanly to what you've already typed.
 
 ### `model` — accuracy vs. speed
 `tiny(.en)` · `base(.en)` · `small(.en)` *(default)* · `medium(.en)` ·

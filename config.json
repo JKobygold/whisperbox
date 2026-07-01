@@ -10,5 +10,7 @@
   "beam_size": 5,
   "sample_rate": 16000,
   "sound_feedback": true,
-  "quit_hotkey": "<ctrl>+<alt>+q"
+  "quit_hotkey": "<ctrl>+<alt>+q",
+  "overlay": true,
+  "insert_space": true
 }

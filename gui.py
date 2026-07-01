@@ -9,6 +9,7 @@ hotkey still works while the window is in the background.
 Run with:  python gui.py   (or ./run.sh)
 """
 
+import math
 import queue
 import sys
 import threading
@@ -46,6 +47,101 @@ STATE_TEXT = {
 }
 
 
+PILL = "#14161c"
+
+
+class Overlay:
+    """A small floating pill that appears near the bottom of the screen while
+    you dictate — a live waveform + status, in the spirit of Wispr / macOS
+    dictation. It never takes keyboard focus, so your text field stays active
+    and the transcription types straight into it."""
+
+    W, H = 300, 62
+
+    def __init__(self, root, core):
+        self.core = core
+        self.mode = "listening"
+        self.phase = 0.0
+        self.visible = False
+
+        self.win = tk.Toplevel(root)
+        self.win.withdraw()
+        self.win.overrideredirect(True)           # borderless, no title bar
+        try:
+            self.win.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        self.canvas = tk.Canvas(self.win, width=self.W, height=self.H,
+                                bg=PILL, highlightthickness=0)
+        self.canvas.pack()
+        self._animate()
+
+    def _round_rect(self, x1, y1, x2, y2, r, **kw):
+        pts = [x1+r, y1, x2-r, y1, x2, y1, x2, y1+r, x2, y2-r, x2, y2,
+               x2-r, y2, x1+r, y2, x1, y2, x1, y2-r, x1, y1+r, x1, y1]
+        return self.canvas.create_polygon(pts, smooth=True, **kw)
+
+    def show(self, mode):
+        self.mode = mode
+        if not self.visible:
+            sw = self.win.winfo_screenwidth()
+            sh = self.win.winfo_screenheight()
+            x = (sw - self.W) // 2
+            y = sh - 150
+            self.win.geometry(f"{self.W}x{self.H}+{x}+{y}")
+            self.win.deiconify()
+            self.win.lift()
+            try:
+                self.win.attributes("-topmost", True, "-alpha", 0.96)
+            except tk.TclError:
+                pass
+            self.visible = True
+
+    def set_mode(self, mode):
+        self.mode = mode
+
+    def hide(self):
+        if self.visible:
+            self.win.withdraw()
+            self.visible = False
+
+    def _animate(self):
+        if self.visible:
+            self._draw()
+        self.win.after(45, self._animate)
+
+    def _draw(self):
+        c = self.canvas
+        c.delete("all")
+        W, H = self.W, self.H
+        self._round_rect(1, 1, W-1, H-1, 26, fill=PILL, outline=BORDER)
+
+        listening = self.mode == "listening"
+        color = REC if listening else AMBER
+        cy = H / 2
+
+        # state dot on the left
+        c.create_oval(20, cy-5, 30, cy+5, fill=color, outline="")
+
+        # waveform bars
+        x0, x1 = 46, W - 22
+        n = 22
+        gap = (x1 - x0) / n
+        if listening:
+            lv = self.core.recorder.get_levels()
+            lv = lv[-n:]
+            lv = [0.0] * (n - len(lv)) + lv    # right-align newest samples
+        else:
+            self.phase += 0.35
+            lv = [(math.sin(self.phase + i * 0.5) + 1) / 2 * 0.7 for i in range(n)]
+
+        for i in range(n):
+            cx = x0 + i * gap + gap / 2
+            bh = max(3, lv[i] * (H * 0.62))
+            c.create_line(cx, cy - bh/2, cx, cy + bh/2,
+                          fill=color, width=3, capstyle="round")
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -63,6 +159,7 @@ class App:
         )
 
         self._build_ui()
+        self.overlay = Overlay(self.root, self.core)
         self.root.after(60, self._pump)
         self._pulse_phase = 0.0
         self._animate()
@@ -182,6 +279,18 @@ class App:
         row("Model", ttk.Combobox(parent, textvariable=self.vars["model"],
                                   values=MODELS, state="readonly"))
 
+        def check(key, label):
+            var = tk.BooleanVar(value=bool(self.cfg.get(key)))
+            self.vars[key] = var
+            cb = tk.Checkbutton(parent, text=label, variable=var, bg=BG, fg=TEXT,
+                                selectcolor=CARD2, activebackground=BG,
+                                activeforeground=TEXT, anchor="w",
+                                font=("Helvetica", 11), highlightthickness=0, bd=0)
+            cb.pack(fill="x", padx=16, pady=1)
+
+        check("overlay", "  Show floating pill while dictating")
+        check("insert_space", "  Add a space before inserted text (clean append)")
+
         tk.Label(parent, text="Hotkey format: <ctrl>+<alt>+<space>, <cmd>+<shift>+d, <f9>",
                  bg=BG, fg=MUTED, font=("Helvetica", 9), wraplength=380,
                  justify="left").pack(fill="x", padx=18, pady=(4, 2))
@@ -246,6 +355,17 @@ class App:
                                fg=STATE_COLOR.get(state, MUTED))
         self._draw_mic()
 
+        # drive the floating pill
+        if self.cfg.get("overlay"):
+            if state == "recording":
+                self.overlay.show("listening")
+            elif state == "transcribing":
+                self.overlay.set_mode("transcribing")
+            else:
+                self.overlay.hide()
+        else:
+            self.overlay.hide()
+
     def _show_transcript(self, text):
         self.transcript.delete("1.0", "end")
         self.transcript.insert("1.0", text if text else "(nothing transcribed)")
@@ -263,6 +383,8 @@ class App:
             "hotkey": self.vars["hotkey"].get().strip() or DEFAULTS["hotkey"],
             "mode": self.vars["mode"].get(),
             "output": self.vars["output"].get(),
+            "overlay": bool(self.vars["overlay"].get()),
+            "insert_space": bool(self.vars["insert_space"].get()),
             "model": self.vars["model"].get(),
         }
         # validate the hotkey before committing

@@ -14,7 +14,9 @@ drive it:
 and calls back into the core.
 """
 
+import collections
 import json
+import math
 import os
 import sys
 import threading
@@ -35,6 +37,8 @@ DEFAULTS = {
     "sample_rate": 16000,
     "sound_feedback": True,
     "quit_hotkey": "<ctrl>+<alt>+q",
+    "overlay": True,             # show the floating "listening" pill while dictating
+    "insert_space": True,        # add a leading space so dictation appends cleanly at the cursor
 }
 
 
@@ -86,21 +90,33 @@ class Recorder:
 
     def __init__(self, sample_rate):
         import sounddevice as sd
+        import numpy as np
         self.sd = sd
+        self.np = np
         self.sample_rate = sample_rate
         self.stream = None
         self.frames = []
+        self.levels = collections.deque(maxlen=48)  # recent audio levels for the waveform
         self._lock = threading.Lock()
 
     def _callback(self, indata, frames, time_info, status):
         if status:
             print(f"[audio] {status}", file=sys.stderr)
+        # RMS loudness of this block, scaled to a roughly 0..1 range for display
+        rms = float(self.np.sqrt(self.np.mean(self.np.square(indata))))
+        level = min(1.0, rms * 12.0)
         with self._lock:
             self.frames.append(indata.copy())
+            self.levels.append(level)
+
+    def get_levels(self):
+        with self._lock:
+            return list(self.levels)
 
     def start(self):
         with self._lock:
             self.frames = []
+            self.levels.clear()
         self.stream = self.sd.InputStream(
             samplerate=self.sample_rate,
             channels=1,
@@ -144,8 +160,10 @@ class Typist:
                 print(f"[output] clipboard failed: {e}")
 
         if mode in ("type", "both"):
+            # Insert at the caret, appending cleanly to whatever is already there.
+            typed = (" " + text) if self.cfg.get("insert_space") else text
             try:
-                self.keyboard.type(text)
+                self.keyboard.type(typed)
             except Exception as e:
                 print(f"[output] typing failed (grant Accessibility permission?): {e}")
 
