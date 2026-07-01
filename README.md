@@ -1,14 +1,27 @@
 # 🎙️ Whisperbox — Local Speech-to-Text
 
-**Talk to your Mac. It types back. Nothing ever leaves your machine.**
+**Speak instead of type. Anywhere on your Mac. Nothing ever leaves your machine.**
 
-Whisperbox is a tiny, private dictation app. Press a hotkey from *anywhere* —
-your editor, your browser, a Slack box, a terminal — start talking, press it
-again, and your words appear as text on your clipboard and at your cursor. It
-runs [OpenAI's Whisper](https://github.com/openai/whisper) locally via
-[faster-whisper](https://github.com/SYSTRAN/faster-whisper), so your voice is
-transcribed **entirely on-device**. No cloud, no account, no subscription, no
-network calls after the one-time model download.
+Whisperbox is a tiny, private **speech-to-text** engine that turns your voice
+into text in *any* app. Press a hotkey, talk, and your words appear right where
+your cursor is. It runs [OpenAI's Whisper](https://github.com/openai/whisper)
+locally via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), so
+your voice is transcribed **entirely on-device** — no cloud, no account, no
+subscription, no network calls after the one-time model download.
+
+It runs as a **background app**: no window, no Dock icon, no Terminal. Just you,
+your keyboard-free voice, and text that lands wherever you're already working.
+
+## What it's great for
+
+- ✍️ **Writing, hands-free.** Draft emails, notes, docs, messages, and code
+  comments by talking — far faster than typing, and easier on your hands.
+- 🌐 **Searching the web with your voice.** Click any browser search bar or
+  address field, speak your query, done — no typing.
+- 🤖 **Talking to your AI agents keyboard-free.** Dictate long prompts straight
+  into ChatGPT, Claude, Cursor, or any chat box. Perfect for thinking out loud
+  and letting the AI do the rest.
+- 💬 **Chat & Slack.** Fire off replies by voice without touching the keyboard.
 
 Think of it as the dictation feature your OS should have shipped — but open,
 offline, and completely yours to reprogram.
@@ -19,15 +32,16 @@ offline, and completely yours to reprogram.
 
 - 🔒 **100% private & offline.** Audio is processed on your Mac and immediately
   discarded. Pull your Wi-Fi and it still works.
-- ⌨️ **A hotkey that works everywhere.** A global shortcut dictates into
-  whatever app is focused — not just one text box.
+- ⌨️ **Works everywhere.** A global hotkey dictates into whatever app is focused
+  — browser, editor, chat, AI agent — not just one text box.
+- 🫥 **Truly seamless.** Runs in the background and never steals focus, so text
+  flows straight into the field you're already in.
 - 🧠 **Real Whisper accuracy**, from a featherweight `tiny` model up to
   `large-v3`, tunable for your machine.
 - 🎛️ **Fully programmable.** Change the hotkey, switch push-to-talk vs.
   toggle, pick clipboard/typing/both — from a settings panel or a JSON file.
 - 🪶 **Lightweight.** No PyTorch, no Electron. Just Python, ~500 MB for the
-  default model, and a native little window.
-- 🆓 **Free and hackable.** ~500 lines of readable Python. Bend it to your will.
+  default model.
 
 ---
 
@@ -68,24 +82,30 @@ Toggle the pill and the smart leading-space behavior in **⚙ Settings**.
 ```bash
 git clone https://github.com/JKobygold/whisperbox.git
 cd whisperbox
-./setup.sh        # one-time: creates a venv, installs deps
-./run.sh          # launches the app
+./setup.sh              # one-time: creates a venv, installs deps
+./build-app.sh          # one-time: builds Whisperbox.app
+open Whisperbox.app     # runs silently in the background
 ```
 
 The first launch downloads the Whisper model once (~500 MB for `small.en`);
 after that it's fully offline. Then just:
 
-1. Click the mic (or press **Ctrl + Alt + Space**)
-2. Talk
-3. Press again — your text lands on the clipboard and types itself in
+1. Click into any text field
+2. Press **Ctrl + Shift + D**, talk, press **Ctrl + Shift + D** again
+3. Your words type themselves in, right at the cursor
 
-> Prefer no window? `./run-cli.sh` runs it in the terminal.
+It runs as a **background app** — no window, no Dock icon, and it never steals
+focus. Press **Ctrl+Shift+W** for Settings, **Ctrl+Shift+Q** to quit.
+
+> Prefer a visible window? Set `"show_window": true` in `config.json`, or run
+> `./run.sh` (window) / `./run-cli.sh` (terminal only).
 
 ### macOS permissions (one time)
 
-Global hotkeys, the microphone, and typing at the cursor each need permission.
-Grant these to your **Terminal** app under
-**System Settings → Privacy & Security**, then relaunch:
+The mic, typing, and the global hotkey each need permission under
+**System Settings → Privacy & Security**. Grant these to **Whisperbox** (it may
+appear as "Python") — or to **Terminal** if you launch via `./run.sh` — then
+relaunch:
 
 - **Microphone** — to hear you
 - **Accessibility** — to type text and register the hotkey

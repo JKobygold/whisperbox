@@ -168,14 +168,30 @@ class App:
             on_error=lambda e: self.events.put(("error", e)),
         )
 
+        self._make_background_app()
         self._build_ui()
         self.overlay = Overlay(self.root, self.core)
         self.root.after(60, self._pump)
         self._pulse_phase = 0.0
         self._animate()
 
+        # Run hidden in the background by default — only the pill shows while
+        # dictating, so we never steal focus from your text field.
+        if not self.cfg.get("show_window", False):
+            self.root.withdraw()
+
         # Load the model in the background so the window appears instantly.
         threading.Thread(target=self._boot, daemon=True).start()
+
+    def _make_background_app(self):
+        """Become a macOS 'accessory' process: no Dock icon, and — crucially —
+        never becomes the active app, so the field you're typing in keeps focus
+        and dictation flows straight into it."""
+        try:
+            from AppKit import NSApplication
+            NSApplication.sharedApplication().setActivationPolicy_(1)  # Accessory
+        except Exception:
+            pass
 
     # ── setup ───────────────────────────────────────────────────────────────
     def _model_sig(self):
@@ -187,7 +203,11 @@ class App:
         except Exception as e:
             self.events.put(("error", f"Model load failed: {e}"))
             return
-        self.hotkeys = HotkeyManager(self.cfg, self.core, on_quit=lambda: self.events.put(("quit", None)))
+        self.hotkeys = HotkeyManager(
+            self.cfg, self.core,
+            on_quit=lambda: self.events.put(("quit", None)),
+            on_window=lambda: self.events.put(("window", None)),
+        )
         try:
             self.hotkeys.start()
         except Exception as e:
@@ -454,11 +474,27 @@ class App:
                 elif kind == "saved_model":
                     self.save_hint.config(text="Saved ✓", fg=GREEN)
                     self.root.after(1600, lambda: self.save_hint.config(text=""))
+                elif kind == "window":
+                    self._toggle_window()
                 elif kind == "quit":
                     self._quit()
         except queue.Empty:
             pass
         self.root.after(60, self._pump)
+
+    def _toggle_window(self):
+        """Show/hide the settings window on demand (window_hotkey). Showing it is
+        the one time we deliberately come to the foreground."""
+        if self.root.state() == "withdrawn":
+            self.root.deiconify()
+            self.root.lift()
+            try:
+                from AppKit import NSApplication
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        else:
+            self.root.withdraw()
 
     def _quit(self):
         try:

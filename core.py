@@ -39,6 +39,8 @@ DEFAULTS = {
     "quit_hotkey": "<ctrl>+<alt>+q",
     "overlay": True,             # show the floating "listening" pill while dictating
     "insert_space": True,        # add a leading space so dictation appends cleanly at the cursor
+    "show_window": False,        # run as a background app; only the pill shows while dictating
+    "window_hotkey": "<ctrl>+<shift>+w",  # pop the settings window open on demand
 }
 
 
@@ -320,10 +322,11 @@ def _parse_hotkey(spec):
 class HotkeyManager:
     """Registers the programmable global hotkey and drives an SttCore."""
 
-    def __init__(self, cfg, core, on_quit=None):
+    def __init__(self, cfg, core, on_quit=None, on_window=None):
         self.cfg = cfg
         self.core = core
         self.on_quit = on_quit or (lambda: None)
+        self.on_window = on_window or (lambda: None)
         self._listener = None
         self._held = False
 
@@ -350,9 +353,11 @@ class HotkeyManager:
         mode = self.cfg["mode"]
         main_vk, main_mods = _parse_hotkey(self.cfg["hotkey"])
         quit_vk, quit_mods = _parse_hotkey(self.cfg["quit_hotkey"])
+        win_vk, win_mods = _parse_hotkey(self.cfg.get("window_hotkey", ""))
 
         held = set()                      # modifier categories currently down
-        st = {"main_down": False, "hold_rec": False, "quit_down": False}
+        st = {"main_down": False, "hold_rec": False, "quit_down": False,
+              "win_down": False}
 
         def fire(target):
             # run off the listener thread so recording/model work never stalls input
@@ -375,6 +380,10 @@ class HotkeyManager:
                     and not st["quit_down"]):
                 st["quit_down"] = True
                 fire(self.on_quit)
+            if (win_vk is not None and vk == win_vk and win_mods <= held
+                    and not st["win_down"]):
+                st["win_down"] = True
+                fire(self.on_window)
 
         def on_release(k):
             cat = key_to_cat.get(k)
@@ -393,6 +402,8 @@ class HotkeyManager:
                     fire(self.core.stop_recording)
             if quit_vk is not None and vk == quit_vk:
                 st["quit_down"] = False
+            if win_vk is not None and vk == win_vk:
+                st["win_down"] = False
 
         self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._listener.start()
