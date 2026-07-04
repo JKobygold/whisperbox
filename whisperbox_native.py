@@ -119,7 +119,7 @@ st = {"down": False, "qdown": False}          # hotkey key-held flags
 stop_event = threading.Event()
 _lock = threading.Lock()                       # guards start/stop transitions
 _model_lock = threading.Lock()                 # ctranslate2 is NOT concurrency-safe
-rec = {"stream": None, "buf": None, "busy": False}
+rec = {"stream": None, "buf": None}
 ui = {"state": "idle"}                          # idle | recording | transcribing
 levels = collections.deque(maxlen=48)           # recent audio levels for the pill
 
@@ -133,7 +133,7 @@ def audio_cb(indata, n, t, status):
 
 def start_rec():
     with _lock:
-        if rec["stream"] is not None or rec["busy"]:
+        if rec["stream"] is not None:
             return
         rec["buf"] = []
         s = sd.InputStream(samplerate=cfg["sample_rate"], channels=1,
@@ -154,7 +154,6 @@ def stop_rec():
         rec["stream"] = None
         buf = rec["buf"]
         rec["buf"] = None          # callback stops appending immediately
-        rec["busy"] = True
     try:
         s.stop(); s.close()
     except Exception:
@@ -164,6 +163,17 @@ def stop_rec():
     audio = (np.concatenate(buf).flatten() if buf
              else np.zeros(0, dtype="float32"))
     threading.Thread(target=transcribe, args=(audio,), daemon=True).start()
+
+
+# Stock phrases Whisper invents on breath/noise captures (YouTube-caption
+# artifacts). Nobody dictates these; never type them.
+HALLUCINATED = {"thanks for watching", "thank you for watching",
+                "thanks for watching everyone", "please like and subscribe",
+                "please subscribe", "subtitles by the amaraorg community"}
+
+
+def _clean(t):
+    return "".join(c for c in t.lower() if c.isalnum() or c.isspace()).strip()
 
 
 def transcribe(audio):
@@ -181,7 +191,19 @@ def transcribe(audio):
             segs, _ = model.transcribe(
                 audio, language=cfg.get("language") or None,
                 beam_size=5, condition_on_previous_text=False)
-            text = " ".join(x.text.strip() for x in segs).strip()
+            parts = []
+            for x in segs:
+                if (x.no_speech_prob > 0.85
+                        or (x.no_speech_prob > 0.5 and x.avg_logprob < -0.8)):
+                    print(f"[native]  -> dropped segment {x.text.strip()!r} "
+                          f"(nsp={x.no_speech_prob:.2f} "
+                          f"lp={x.avg_logprob:.2f})", flush=True)
+                    continue
+                parts.append(x.text.strip())
+            text = " ".join(parts).strip()
+        if _clean(text) in HALLUCINATED:
+            print(f"[native]  -> hallucination filtered: {text!r}", flush=True)
+            text = ""
         print(f"[native] transcript: {text!r}", flush=True)
         if text:
             out = cfg.get("output", "both")
@@ -193,9 +215,15 @@ def transcribe(audio):
     except Exception as e:
         print(f"[native] transcribe error: {e}", flush=True)
     finally:
+        # A new recording may have started while this transcription ran —
+        # don't stomp its state (or the indicator pill vanishes mid-dictation).
         with _lock:
-            rec["busy"] = False
-        ui["state"] = "idle"
+            still_recording = rec["stream"] is not None
+        if still_recording:
+            ui["state"] = "recording"
+            print("[native] RECORDING (press hotkey again to stop)", flush=True)
+        else:
+            ui["state"] = "idle"
 
 
 def toggle():

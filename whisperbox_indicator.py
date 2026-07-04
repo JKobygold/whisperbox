@@ -19,11 +19,12 @@ import objc
 from Foundation import NSObject, NSMakeRect
 from AppKit import (
     NSApplication, NSPanel, NSView, NSColor, NSBezierPath, NSTimer, NSScreen,
-    NSBackingStoreBuffered, NSFloatingWindowLevel,
+    NSBackingStoreBuffered, NSStatusWindowLevel,
     NSWindowStyleMaskBorderless, NSWindowStyleMaskNonactivatingPanel,
     NSApplicationActivationPolicyAccessory,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorStationary,
+    NSWindowCollectionBehaviorFullScreenAuxiliary,
 )
 
 LOG = "/tmp/whisperbox.log"
@@ -121,14 +122,17 @@ def main():
     mask = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
     panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(x, y, W, H), mask, NSBackingStoreBuffered, False)
-    panel.setLevel_(NSFloatingWindowLevel)
+    panel.setLevel_(NSStatusWindowLevel)   # above fullscreen windows
     panel.setOpaque_(False)
     panel.setBackgroundColor_(NSColor.clearColor())
     panel.setHasShadow_(True)
     panel.setIgnoresMouseEvents_(True)
     panel.setCollectionBehavior_(
         NSWindowCollectionBehaviorCanJoinAllSpaces
-        | NSWindowCollectionBehaviorStationary)
+        | NSWindowCollectionBehaviorStationary
+        # fullscreen apps are their own Space; without this flag macOS
+        # shows the pill on the last regular desktop instead
+        | NSWindowCollectionBehaviorFullScreenAuxiliary)
 
     view = IndicatorView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
     panel.setContentView_(view)
